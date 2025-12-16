@@ -184,8 +184,8 @@ if uploaded_file:
 
         st.success(f"Prediction: **{main_class}** ({main_conf:.2f}%)")
 
-         st.subheader("Disease Description")
-      st.write(
+        st.subheader("Disease Description")
+        st.write(
     DISEASE_DESCRIPTIONS.get(
         main_class,
         "Description not available for this condition."
