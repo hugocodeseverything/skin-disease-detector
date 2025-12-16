@@ -8,6 +8,7 @@ Original file is located at
 """
 import xgboost as xgb
 import streamlit as st
+from disease_descriptions import DISEASE_DESCRIPTIONS
 import numpy as np
 import joblib
 from PIL import Image
@@ -183,8 +184,14 @@ if uploaded_file:
 
         st.success(f"Prediction: **{main_class}** ({main_conf:.2f}%)")
 
-        st.subheader("Disease Description")
-        st.write(DISEASE_INFO.get(main_class, "No description available."))
+         st.subheader("Disease Description")
+      st.write(
+    DISEASE_DESCRIPTIONS.get(
+        main_class,
+        "Description not available for this condition."
+    )
+)
+
 
         # Confidence bar chart
         st.subheader("Prediction Confidence")
