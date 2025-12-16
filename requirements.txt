@@ -1,0 +1,8 @@
+streamlit
+numpy
+scikit-learn
+xgboost
+joblib
+pillow
+scikit-image
+matplotlib
