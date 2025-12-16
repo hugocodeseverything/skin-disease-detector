@@ -143,7 +143,7 @@ def extract_features_from_image(img):
 
 # ================= PAGE: PREDICTION =================
 if page == "Prediction":
-    st.title("Skin Disease Detection")
+    st.title("DermaVision")
     st.caption("Machine Learning–based Skin Disease Classification")
     st.divider()
 
