@@ -11,14 +11,16 @@ import streamlit as st
 import numpy as np
 import joblib
 from PIL import Image
+import matplotlib.pyplot as plt
 
 from skimage.io import imread
 from skimage.transform import resize
-from skimage.color import rgb2hsv, hsv2rgb
+from skimage.color import rgb2gray, rgb2hsv, hsv2rgb
 from skimage.exposure import equalize_adapthist, rescale_intensity
-from skimage.filters import gaussian
-
-import matplotlib.pyplot as plt
+from skimage.filters import gaussian, threshold_otsu
+from skimage.feature import local_binary_pattern, hog, graycomatrix, graycoprops
+from skimage import measure
+from scipy.stats import skew
 
 # ================= PAGE CONFIG =================
 st.set_page_config(
@@ -35,95 +37,159 @@ model = joblib.load("xgboost_model.pkl")
 scaler = joblib.load("scaler.pkl")
 label_encoder = joblib.load("label_encoder.pkl")
 
-# ================= DISEASE DESCRIPTIONS =================
+# ================= DISEASE INFO =================
 DISEASE_INFO = {
     "Acne and Rosacea Photos":
-        "Inflammatory skin conditions involving redness, pimples, and clogged pores.",
+        "Inflammatory skin conditions involving redness and clogged pores.",
     "Eczema Photos":
-        "A chronic condition causing itchy, inflamed, and dry skin.",
+        "A chronic condition causing itchy and inflamed skin.",
     "Psoriasis pictures Lichen Planus and related diseases":
-        "An autoimmune disease leading to rapid skin cell buildup.",
+        "An autoimmune disease causing rapid skin cell buildup.",
     "Melanoma Skin Cancer Nevi and Moles":
         "A serious form of skin cancer originating from melanocytes.",
     "Tinea Ringworm Candidiasis and other Fungal Infections":
         "Fungal infections affecting skin, nails, or scalp."
 }
-def preprocess_image(path_or_img):
-    """
-    Preprocess gambar dengan normalisasi lebih baik.
-    Pipeline DISAMAKAN dengan training.
-    """
 
-    if isinstance(path_or_img, str):
-        img = imread(path_or_img)
-    else:
-        img = np.array(path_or_img)
+# ================= PREPROCESS IMAGE =================
+def preprocess_image(img):
+    img = np.array(img)
 
+    # Resize utama
     img = resize(img, (256, 256), anti_aliasing=True)
 
+    # CLAHE di V channel
     hsv = rgb2hsv(img)
     hsv[..., 2] = equalize_adapthist(hsv[..., 2], clip_limit=0.03)
     img = hsv2rgb(hsv)
 
+    # Contrast stretching
     for i in range(3):
         p2, p98 = np.percentile(img[..., i], (2, 98))
-        img[..., i] = rescale_intensity(
-            img[..., i],
-            in_range=(p2, p98)
-        )
+        img[..., i] = rescale_intensity(img[..., i], in_range=(p2, p98))
 
+    # Normalize & denoise
     img = np.clip(img, 0, 1)
-
     img = gaussian(img, sigma=0.5, channel_axis=-1)
-
-    img = img.flatten()
-    img = scaler.transform([img])
 
     return img
 
+# ================= FEATURE EXTRACTION (PERSIS TRAINING) =================
+def extract_features_from_image(img):
+    gray = rgb2gray(img)
+    gray_uint8 = (gray * 255).astype(np.uint8)
+
+    # LBP
+    lbp = local_binary_pattern(gray_uint8, P=16, R=2, method="uniform")
+    lbp_hist, _ = np.histogram(lbp.ravel(), bins=18, range=(0, 18), density=True)
+
+    # GLCM
+    gray_q = (gray_uint8 // 8).astype(np.uint8)
+    glcm = graycomatrix(
+        gray_q,
+        distances=[1, 2],
+        angles=[0, np.pi/4, np.pi/2, 3*np.pi/4],
+        levels=32,
+        symmetric=True,
+        normed=True
+    )
+    props = ["contrast", "dissimilarity", "homogeneity", "energy", "correlation", "ASM"]
+    glcm_features = np.hstack([graycoprops(glcm, p).ravel() for p in props])
+
+    # HOG
+    small_gray = resize(gray, (64, 64), anti_aliasing=True)
+    hog_feat = hog(
+        small_gray,
+        orientations=9,
+        pixels_per_cell=(16, 16),
+        cells_per_block=(2, 2),
+        block_norm="L2-Hys",
+        feature_vector=True
+    )
+
+    # HSV histogram
+    hsv = rgb2hsv(img)
+    hsv_hist = np.concatenate([
+        np.histogram(hsv[..., 0], bins=32, range=(0, 1), density=True)[0],
+        np.histogram(hsv[..., 1], bins=16, range=(0, 1), density=True)[0],
+        np.histogram(hsv[..., 2], bins=16, range=(0, 1), density=True)[0],
+    ])
+
+    # Color moments
+    color_moments = []
+    for c in range(3):
+        channel_data = img[..., c].ravel()
+        color_moments.extend([
+            np.mean(channel_data),
+            np.std(channel_data),
+            skew(channel_data, bias=False)
+        ])
+    color_moments = np.array(color_moments)
+
+    # Shape features
+    try:
+        thresh = threshold_otsu(gray)
+        mask = (gray > thresh).astype(np.uint8)
+        labeled = measure.label(mask)
+        props = measure.regionprops(labeled)
+
+        if props:
+            largest = max(props, key=lambda x: x.area)
+            area = largest.area / (img.shape[0] * img.shape[1])
+            perimeter = largest.perimeter
+            eccentricity = largest.eccentricity
+            solidity = largest.solidity
+            compactness = (4 * np.pi * largest.area) / (perimeter ** 2) if perimeter > 0 else 0
+        else:
+            area = perimeter = eccentricity = solidity = compactness = 0.0
+    except:
+        area = perimeter = eccentricity = solidity = compactness = 0.0
+
+    features = np.concatenate([
+        lbp_hist,
+        glcm_features,
+        hog_feat,
+        hsv_hist,
+        color_moments,
+        np.array([area, eccentricity, solidity, compactness, perimeter])
+    ])
+
+    return features
+
+# ================= UPLOAD & PREDICT =================
 uploaded_file = st.file_uploader(
     "Upload a skin image",
     type=["jpg", "jpeg", "png"]
 )
 
-if uploaded_file is not None:
+if uploaded_file:
     image = Image.open(uploaded_file).convert("RGB")
-
-    st.image(
-        image,
-        caption="Uploaded Image",
-        use_column_width=True
-    )
+    st.image(image, caption="Uploaded Image", use_column_width=True)
 
     if st.button("Predict Disease"):
-        X = preprocess_image(image)
+        img_prep = preprocess_image(image)
+        features = extract_features_from_image(img_prep)
 
-        probs = model.predict_proba(X)[0]
+        features = scaler.transform([features])
+
+        probs = model.predict_proba(features)[0]
         classes = label_encoder.classes_
 
         top_idx = np.argsort(probs)[::-1][:3]
-
         main_class = classes[top_idx[0]]
         main_conf = probs[top_idx[0]] * 100
 
         st.success(f"Prediction: **{main_class}** ({main_conf:.2f}%)")
 
-
         st.subheader("Disease Description")
-        st.write(
-            DISEASE_INFO.get(
-                main_class,
-                "No detailed description available for this condition."
-            )
-        )
+        st.write(DISEASE_INFO.get(main_class, "No description available."))
 
-
+        # Confidence bar chart
         st.subheader("Prediction Confidence")
-
-        fig, ax = plt.subplots()
         labels = [classes[i] for i in top_idx]
         values = [probs[i] * 100 for i in top_idx]
 
+        fig, ax = plt.subplots()
         ax.barh(labels, values)
         ax.set_xlabel("Confidence (%)")
         ax.invert_yaxis()
@@ -133,12 +199,6 @@ if uploaded_file is not None:
 
         st.pyplot(fig)
 
-
-        st.subheader("Top 3 Predictions")
-        for i in top_idx:
-            st.write(f"- {classes[i]}: {probs[i]*100:.2f}%")
-
         st.warning(
-            "This application is for educational purposes only "
-            "and must not be used as a medical diagnosis."
+            "This application is for educational purposes only and not a medical diagnosis."
         )
