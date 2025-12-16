@@ -19,7 +19,7 @@ from disease_descriptions import DISEASE_DESCRIPTIONS
 
 # ================= PAGE CONFIG =================
 st.set_page_config(
-    page_title="Skin Disease Detection",
+    page_title="Derma Vision",
     layout="centered"
 )
 
