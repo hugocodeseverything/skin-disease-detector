@@ -193,20 +193,36 @@ if uploaded_file:
 )
 
 
-        # Confidence bar chart
-        st.subheader("Prediction Confidence")
-        labels = [classes[i] for i in top_idx]
-        values = [probs[i] * 100 for i in top_idx]
+     st.subheader("Prediction Confidence")
 
-        fig, ax = plt.subplots()
-        ax.barh(labels, values)
-        ax.set_xlabel("Confidence (%)")
-        ax.invert_yaxis()
+     labels = [classes[i] for i in top_idx]
+     values = [probs[i] * 100 for i in top_idx]
 
-        for i, v in enumerate(values):
-            ax.text(v + 0.5, i, f"{v:.2f}%", va="center")
+     fig, ax = plt.subplots(figsize=(10, 4))  # ⬅️ figure diperlebar
 
+     bars = ax.barh(labels, values, color="#4C72B0")
+
+     ax.set_xlabel("Confidence (%)") 
+     ax.set_xlim(0, 100) 
+     ax.invert_yaxis()
+
+# Tambahin label persen DI DALAM bar
+     for bar, value in zip(bars, values):
+        ax.text(
+           value - 2,                         
+           bar.get_y() + bar.get_height()/2,
+           f"{value:.2f}%",
+           va="center",
+           ha="right",
+           color="white",
+           fontsize=10,
+           fontweight="bold"
+       )
+
+
+        plt.subplots_adjust(left=0.45)
         st.pyplot(fig)
+
 
         st.warning(
             "This application is for educational purposes only and not a medical diagnosis."
