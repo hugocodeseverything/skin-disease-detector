@@ -11,7 +11,6 @@ import streamlit as st
 import numpy as np
 import joblib
 from PIL import Image
-import cv2
 
 from skimage.io import imread
 from skimage.transform import resize
